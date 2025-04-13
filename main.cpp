@@ -12,6 +12,9 @@
 #define DEFAULT_WINDOW_HEIGHT 768
 #define FPS 30
 
+// lower value = more smoothing
+#define SMOOTHING_FACTOR 0.5
+
 // the sample size depends on sf::SoundRecorder::onProcessSamples
 // and I don't think you can change it
 // with a sample rate of 44100 you get 1102 samples every loop
@@ -57,6 +60,8 @@ int main() {
   const double maxFrequency = SAMPLE_RATE / 2.0; // nyquist
   const double minDb = -80.0;
   const double maxDb = 0.0;
+  // needs to be outside the loop because it will average out for smoothing
+  std::vector<double> barHeights(SAMPLE_SIZE, 0.0);
 
   while (window.isOpen()) {
     while (const std::optional event = window.pollEvent()) {
@@ -106,19 +111,19 @@ int main() {
       int numberOfBars = magnitudes.size();
 
       // calculate bar height based on magnitudes
-      std::vector<double> barHeights;
-      for (auto mag : magnitudes) {
+      for (size_t i = 0; i < magnitudes.size(); ++i) {
         // this normalizes to 1 more or less
         // also removes noise as a side effect, kind of
-        mag /= 1.15e+07;
+        double normalMag = magnitudes[i] / 1.15e+07;
         // convert magnitudes to dB
         // add small number to avoid log(0)
-        double db = 20.0 * std::log10(mag + 1e-12);
+        double db = 20.0 * std::log10(normalMag + 1e-12);
         // clamp
         db = std::clamp(db, minDb, maxDb);
         // scale to window size
         double height = ((db - minDb) / (maxDb - minDb)) * window.getSize().y;
-        barHeights.push_back(height);
+        // smooth (EMA)
+        barHeights[i] = SMOOTHING_FACTOR * height + (1 - SMOOTHING_FACTOR) * barHeights[i];
       }
 
       // calculate x position of bars based on frequency (logarithmic)
