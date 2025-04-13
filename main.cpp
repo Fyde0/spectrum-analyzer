@@ -14,6 +14,8 @@
 
 // lower value = more smoothing
 #define SMOOTHING_FACTOR 0.5
+#define TILT 4.5           // dB/oct
+#define TILT_REF_FREQ 1000 // Hz
 
 // the sample size depends on sf::SoundRecorder::onProcessSamples
 // and I don't think you can change it
@@ -58,8 +60,9 @@ int main() {
   // variables
   const double minFrequency = 20.0;
   const double maxFrequency = SAMPLE_RATE / 2.0; // nyquist
-  const double minDb = -80.0;
-  const double maxDb = 0.0;
+  //
+  const double minDb = 45.0;
+  const double maxDb = 150.0;
   // needs to be outside the loop because it will average out for smoothing
   std::vector<double> barHeights(SAMPLE_SIZE, 0.0);
 
@@ -77,10 +80,11 @@ int main() {
         window.setView(sf::View(viewArea));
       }
 
+      // press Tab to cycle between input devices
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab)) {
         currentDeviceIndex = (currentDeviceIndex + 1) % devices.size();
         // you should be able to change device without stopping but it doesn't
-        // really work
+        // really work so stop, change and start again
         recorder.stop();
         bool deviceSet = recorder.setDevice(devices[currentDeviceIndex]);
         bool recorderStarted = recorder.start(SAMPLE_RATE);
@@ -112,30 +116,26 @@ int main() {
 
       // calculate bar height based on magnitudes
       for (size_t i = 0; i < magnitudes.size(); ++i) {
-        // this normalizes to 1 more or less
-        // also removes noise as a side effect, kind of
-        double normalMag = magnitudes[i] / 1.15e+07;
-        // convert magnitudes to dB
-        // add small number to avoid log(0)
-        double db = 20.0 * std::log10(normalMag + 1e-12);
-        // clamp
-        db = std::clamp(db, minDb, maxDb);
+        // convert to log scale
+        double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
+        // calculate frequency of bar
+        double frequency = static_cast<double>(i * SAMPLE_RATE) / SAMPLE_SIZE;
+        // calculate tilt for this frequency
+        double tiltDb = TILT * std::log2(frequency / TILT_REF_FREQ);
+        // apply tilt
+        db += tiltDb;
+        // remove everything below minDb
+        db = std::max(minDb, db);
         // scale to window size
         double height = ((db - minDb) / (maxDb - minDb)) * window.getSize().y;
         // smooth (EMA)
-        barHeights[i] = SMOOTHING_FACTOR * height + (1 - SMOOTHING_FACTOR) * barHeights[i];
-      }
+        barHeights[i] =
+            SMOOTHING_FACTOR * height + (1 - SMOOTHING_FACTOR) * barHeights[i];
 
-      // calculate x position of bars based on frequency (logarithmic)
-      for (size_t i = 0; i < numberOfBars; ++i) {
-
-        // frequency of bar
-        double frequency = static_cast<double>(i * SAMPLE_RATE) / SAMPLE_SIZE;
         // x position based on frequency range and window size
         float xPosition = window.getSize().x *
                           (std::log10(frequency) - std::log10(minFrequency)) /
                           (std::log10(maxFrequency) - std::log10(minFrequency));
-
         // create bar and set properties
         sf::RectangleShape bar;
         bar.setSize(sf::Vector2f(barWidth, barHeights[i]));
