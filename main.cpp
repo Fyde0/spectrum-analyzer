@@ -12,17 +12,12 @@
 #define DEFAULT_WINDOW_HEIGHT 768
 #define FPS 30
 
-// lower value = more smoothing
-#define SMOOTHING_FACTOR 0.5
-#define TILT 4.5           // dB/oct
-#define TILT_REF_FREQ 1000 // Hz
+#define SMOOTHING_FACTOR 0.5 // lower value = more smoothing
+#define TILT 4.5             // dB/oct
+#define TILT_REF_FREQ 1000   // Hz
 
-// the sample size depends on sf::SoundRecorder::onProcessSamples
-// and I don't think you can change it
-// with a sample rate of 44100 you get 1102 samples every loop
-// you probably shouldn't change these
 #define SAMPLE_RATE 44100
-#define SAMPLE_SIZE 1024
+#define SAMPLE_SIZE 8192
 
 int main() {
   // set up window
@@ -44,7 +39,7 @@ int main() {
   }
 
   // set up and run audio input
-  Recorder recorder;
+  Recorder recorder(SAMPLE_SIZE);
   if (!recorder.start(SAMPLE_RATE)) {
     std::cerr << "Error starting audio input.";
   }
@@ -61,7 +56,7 @@ int main() {
   const double minFrequency = 20.0;
   const double maxFrequency = SAMPLE_RATE / 2.0; // nyquist
   //
-  const double minDb = 45.0;
+  const double minDb = 55.0;
   const double maxDb = 150.0;
   //
   const float minBarWidth = 2.0;
@@ -102,7 +97,7 @@ int main() {
     }
 
     // get current audio samples from audio input
-    const std::vector<int16_t> &samples = recorder.getSamples();
+    const std::deque<int16_t> &samples = recorder.getSamples();
 
     if (!samples.empty()) {
       // calculate fft of current samples, and get magnitudes
@@ -112,7 +107,7 @@ int main() {
       // clear the window
       window.clear(sf::Color::Black);
 
-      // calculate bar height based on magnitudes
+      // calculate bars height, width and position based on magnitudes
       // each iteration draws the previous bar
       // so we can calculate the width after knowing where the next bar will be
       // variables to save info about previous bar
@@ -120,7 +115,7 @@ int main() {
       float prevHeight = 0.0f;
       // adding dummy value at the end for extra iteration to draw the last bar
       magnitudes.push_back(0.0);
-      // 
+      //
       for (size_t i = 0; i < magnitudes.size(); ++i) {
         // convert to log scale
         double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
@@ -134,7 +129,7 @@ int main() {
         db = std::max(minDb, db);
         // scale to window size
         double height = ((db - minDb) / (maxDb - minDb)) * window.getSize().y;
-        // smooth (EMA)
+        // smooth over time (EMA)
         barHeights[i] =
             SMOOTHING_FACTOR * height + (1 - SMOOTHING_FACTOR) * barHeights[i];
 
@@ -147,6 +142,7 @@ int main() {
         // don't draw the first iteration
         // the second iteration draws the first bar, etc.
         if (i > 0) {
+          // width based on the position of the previous bar
           float width = std::max(minBarWidth, xPosition - prevX);
           float centerX = ((xPosition + prevX) / 2.0f) - width / 2.0f;
           // create bar and set properties
