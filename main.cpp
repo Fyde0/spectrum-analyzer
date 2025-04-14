@@ -1,7 +1,7 @@
 #include "FFT.hpp"
 #include "Recorder.hpp"
 #include <SFML/Graphics.hpp>
-#include <SFML/System/Vector2.hpp>
+#include <SFML/System.hpp>
 #include <SFML/Window.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -19,7 +19,23 @@
 #define SAMPLE_RATE 44100
 #define SAMPLE_SIZE 8192
 
-int main() {
+enum Mode { bars, line };
+Mode mode = line;
+
+int main(int argc, char *argv[]) {
+  // arguments
+  if (argc >= 2) {
+    std::string arg = argv[1];
+    if (arg == "bars") {
+      mode = bars;
+    } else if (arg == "line") {
+      mode = line;
+    } else {
+      std::cerr << "Unknown mode: " << arg << "\n";
+      std::cerr << "Usage: ./analyzer [bars|line]\n";
+      return 1;
+    }
+  }
   // set up window
   sf::RenderWindow window(
       sf::VideoMode({DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT}),
@@ -116,6 +132,10 @@ int main() {
       // adding dummy value at the end for extra iteration to draw the last bar
       magnitudes.push_back(0.0);
       //
+      std::vector<double> xPositions(magnitudes.size(), 0.0);
+      // vertex array for line
+      sf::VertexArray lineVert(sf::PrimitiveType::LineStrip, magnitudes.size());
+
       for (size_t i = 0; i < magnitudes.size(); ++i) {
         // convert to log scale
         double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
@@ -142,22 +162,37 @@ int main() {
         // don't draw the first iteration
         // the second iteration draws the first bar, etc.
         if (i > 0) {
-          // width based on the position of the previous bar
-          float width = std::max(minBarWidth, xPosition - prevX);
-          float centerX = ((xPosition + prevX) / 2.0f) - width / 2.0f;
-          // create bar and set properties
-          sf::RectangleShape bar;
-          bar.setSize(sf::Vector2f(width, prevHeight));
-          bar.setOrigin(sf::Vector2f(width / 2.0f, 0));
-          bar.setPosition(
-              sf::Vector2f(centerX, window.getSize().y - prevHeight));
-          // draw on window
-          window.draw(bar);
+
+          if (mode == bars) {
+            // width based on the position of the previous bar
+            float width = std::max(minBarWidth, xPosition - prevX);
+            // x is slightly left because of bar width
+            float barX = ((xPosition + prevX) / 2.0f) - width / 2.0f;
+            // create bar and set properties
+            sf::RectangleShape bar;
+            bar.setSize(sf::Vector2f(width, prevHeight));
+            bar.setOrigin(sf::Vector2f(width / 2.0f, 0));
+            bar.setPosition(
+                sf::Vector2f(barX, window.getSize().y - prevHeight));
+
+            window.draw(bar);
+          }
+
+          if (mode == line) {
+            // line vertex
+            lineVert[i].position =
+                sf::Vector2f(prevX, window.getSize().y - prevHeight);
+            lineVert[i].color = sf::Color::White;
+          }
         }
 
         //
         prevX = xPosition;
         prevHeight = barHeights[i];
+      }
+
+      if (mode == line) {
+        window.draw(lineVert);
       }
 
       // update screen
