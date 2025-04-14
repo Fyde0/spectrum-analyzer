@@ -1,6 +1,8 @@
 #include "FFT.hpp"
 #include "Recorder.hpp"
+#include "catmullRom.hpp"
 #include <SFML/Graphics.hpp>
+#include <SFML/Graphics/Vertex.hpp>
 #include <SFML/System.hpp>
 #include <SFML/Window.hpp>
 #include <algorithm>
@@ -76,8 +78,8 @@ int main(int argc, char *argv[]) {
   const double maxDb = 150.0;
   //
   const float minBarWidth = 2.0;
-  // needs to be outside the loop because it will average out for smoothing
-  std::vector<double> yPositions(SAMPLE_SIZE, 0.0);
+  // needs to be outside the loop because it will average out for time smoothing
+  std::vector<float> yPositions(SAMPLE_SIZE, 0.0);
 
   while (window.isOpen()) {
     while (const std::optional event = window.pollEvent()) {
@@ -123,18 +125,12 @@ int main(int argc, char *argv[]) {
       // clear the window
       window.clear(sf::Color::Black);
 
-      // calculate position and width based on magnitudes
+      // calculate position based on magnitudes
       // each iteration draws the previous item (bar or vertex)
-      // so we can calculate the width after knowing where the next item will be
-      // variables to save info about previous item
-      float prevX = 0.0f;
-      float prevY = 0.0f;
       // adding dummy value at the end for extra iteration to draw the last item
       magnitudes.push_back(0.0);
-      //
-      std::vector<double> xPositions(magnitudes.size(), 0.0);
-      // vertex array for line
-      sf::VertexArray lineVert(sf::PrimitiveType::LineStrip, magnitudes.size());
+      // (yPositions is above, outside of loop)
+      std::vector<float> xPositions(magnitudes.size(), 0.0);
 
       for (size_t i = 0; i < magnitudes.size(); ++i) {
         // convert to log scale
@@ -157,40 +153,49 @@ int main(int argc, char *argv[]) {
         double freqLog = (std::log2(frequency) - std::log2(minFrequency)) /
                          (std::log2(maxFrequency) - std::log2(minFrequency));
         // x position based on frequency range and window size
-        float xPosition = window.getSize().x * freqLog;
+        xPositions[i] = window.getSize().x * freqLog;
+      }
 
-        // don't draw the first iteration
-        // the second iteration draws the first item, etc.
-        if (i > 0) {
+      if (mode == bars) {
+        // start from 1 because each iteration we draw the previous item
+        for (size_t i = 1; i < magnitudes.size(); ++i) {
+          // width based on the position of the previous bar
+          float width =
+              std::max(minBarWidth, xPositions[i] - xPositions[i - 1]);
+          // x is slightly left because of bar width
+          float barX =
+              ((xPositions[i] + xPositions[i - 1]) / 2.0f) - width / 2.0f;
+          // create bar, set properties and draw
+          sf::RectangleShape bar;
+          bar.setSize(sf::Vector2f(width, yPositions[i - 1]));
+          bar.setPosition(
+              sf::Vector2f(barX, window.getSize().y - yPositions[i - 1]));
 
-          if (mode == bars) {
-            // width based on the position of the previous bar
-            float width = std::max(minBarWidth, xPosition - prevX);
-            // x is slightly left because of bar width
-            float barX = ((xPosition + prevX) / 2.0f) - width / 2.0f;
-            // create bar and set properties
-            sf::RectangleShape bar;
-            bar.setSize(sf::Vector2f(width, prevY));
-            bar.setOrigin(sf::Vector2f(width / 2.0f, 0));
-            bar.setPosition(sf::Vector2f(barX, window.getSize().y - prevY));
-
-            window.draw(bar);
-          }
-
-          if (mode == line) {
-            // line vertex
-            lineVert[i].position =
-                sf::Vector2f(prevX, window.getSize().y - prevY);
-            lineVert[i].color = sf::Color::White;
-          }
+          window.draw(bar);
         }
-
-        //
-        prevX = xPosition;
-        prevY = yPositions[i];
       }
 
       if (mode == line) {
+        sf::VertexArray lineVert(sf::PrimitiveType::LineStrip,
+                                 magnitudes.size());
+        for (size_t i = 1; i < magnitudes.size() - 2; ++i) {
+          // get four consecutive vectors for Catmull–Rom
+          const sf::Vector2f p0 = sf::Vector2f(
+              xPositions[i - 1], window.getSize().y - yPositions[i - 1]);
+          const sf::Vector2f p1 =
+              sf::Vector2f(xPositions[i], window.getSize().y - yPositions[i]);
+          const sf::Vector2f p2 = sf::Vector2f(
+              xPositions[i + 1], window.getSize().y - yPositions[i + 1]);
+          const sf::Vector2f p3 = sf::Vector2f(
+              xPositions[i + 2], window.getSize().y - yPositions[i + 2]);
+
+          for (float t = 0; t <= 1.0f; t += 0.1f) {
+            sf::Vertex v;
+            v.position = catmullRom(p0, p1, p2, p3, t);
+            v.color = sf::Color::White;
+            lineVert.append(v);
+          }
+        }
         window.draw(lineVert);
       }
 
