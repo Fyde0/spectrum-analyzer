@@ -63,6 +63,8 @@ int main() {
   //
   const double minDb = 45.0;
   const double maxDb = 150.0;
+  //
+  const float minBarWidth = 2.0;
   // needs to be outside the loop because it will average out for smoothing
   std::vector<double> barHeights(SAMPLE_SIZE, 0.0);
 
@@ -105,16 +107,20 @@ int main() {
     if (!samples.empty()) {
       // calculate fft of current samples, and get magnitudes
       fft.process(samples);
-      const std::vector<double> &magnitudes = fft.getMagnitudes();
+      std::vector<double> magnitudes = fft.getMagnitudes();
 
       // clear the window
       window.clear(sf::Color::Black);
 
-      // Render bars based on magnitudes
-      int barWidth = 2; // TODO wider for lower frequencies?
-      int numberOfBars = magnitudes.size();
-
       // calculate bar height based on magnitudes
+      // each iteration draws the previous bar
+      // so we can calculate the width after knowing where the next bar will be
+      // variables to save info about previous bar
+      float prevX = 0.0f;
+      float prevHeight = 0.0f;
+      // adding dummy value at the end for extra iteration to draw the last bar
+      magnitudes.push_back(0.0);
+      // 
       for (size_t i = 0; i < magnitudes.size(); ++i) {
         // convert to log scale
         double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
@@ -132,18 +138,30 @@ int main() {
         barHeights[i] =
             SMOOTHING_FACTOR * height + (1 - SMOOTHING_FACTOR) * barHeights[i];
 
+        // frequency to log scale, for positioning and width
+        double freqLog = (std::log2(frequency) - std::log2(minFrequency)) /
+                         (std::log2(maxFrequency) - std::log2(minFrequency));
         // x position based on frequency range and window size
-        float xPosition = window.getSize().x *
-                          (std::log10(frequency) - std::log10(minFrequency)) /
-                          (std::log10(maxFrequency) - std::log10(minFrequency));
-        // create bar and set properties
-        sf::RectangleShape bar;
-        bar.setSize(sf::Vector2f(barWidth, barHeights[i]));
-        bar.setPosition(
-            sf::Vector2f(xPosition, window.getSize().y - bar.getSize().y));
+        float xPosition = window.getSize().x * freqLog;
 
-        // draw on window
-        window.draw(bar);
+        // don't draw the first iteration
+        // the second iteration draws the first bar, etc.
+        if (i > 0) {
+          float width = std::max(minBarWidth, xPosition - prevX);
+          float centerX = ((xPosition + prevX) / 2.0f) - width / 2.0f;
+          // create bar and set properties
+          sf::RectangleShape bar;
+          bar.setSize(sf::Vector2f(width, prevHeight));
+          bar.setOrigin(sf::Vector2f(width / 2.0f, 0));
+          bar.setPosition(
+              sf::Vector2f(centerX, window.getSize().y - prevHeight));
+          // draw on window
+          window.draw(bar);
+        }
+
+        //
+        prevX = xPosition;
+        prevHeight = barHeights[i];
       }
 
       // update screen
