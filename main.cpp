@@ -10,8 +10,8 @@
 #include <iostream>
 #include <vector>
 
-#define DEFAULT_WINDOW_WIDTH 1024
-#define DEFAULT_WINDOW_HEIGHT 768
+#define DEFAULT_WINDOW_WIDTH 1280
+#define DEFAULT_WINDOW_HEIGHT 720
 #define FPS 30
 
 #define SMOOTHING_FACTOR 0.5 // lower value = more smoothing
@@ -176,8 +176,12 @@ int main(int argc, char *argv[]) {
       }
 
       if (mode == line) {
+        // line
         sf::VertexArray lineVert(sf::PrimitiveType::LineStrip,
                                  magnitudes.size());
+        // filled part
+        sf::VertexArray fill(sf::PrimitiveType::TriangleStrip);
+
         for (size_t i = 1; i < magnitudes.size() - 2; ++i) {
           // get four consecutive vectors for Catmull–Rom
           const sf::Vector2f p0 = sf::Vector2f(
@@ -189,14 +193,20 @@ int main(int argc, char *argv[]) {
           const sf::Vector2f p3 = sf::Vector2f(
               xPositions[i + 2], window.getSize().y - yPositions[i + 2]);
 
+          // interpolate and make vertex for line and fill
           for (float t = 0; t <= 1.0f; t += 0.1f) {
             sf::Vertex v;
             v.position = catmullRom(p0, p1, p2, p3, t);
-            v.color = sf::Color::White;
+            v.color = sf::Color(255, 255, 255, 200);
             lineVert.append(v);
+            v.color.a = 63;
+            fill.append(v);
+            v.position.y = window.getSize().y;
+            fill.append(v);
           }
         }
         window.draw(lineVert);
+        window.draw(fill);
       }
 
       // update screen
