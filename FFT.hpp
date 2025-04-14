@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <fftw3.h>
 #include <vector>
 
@@ -11,6 +12,8 @@ public:
     sampleSize_ = sampleSize;
     // set size of in_, important apparently
     in_.resize(sampleSize_);
+    // allocate space for out_
+    out_ = fftw_alloc_complex(sampleSize_);
     // tell fftw what to do
     plan_ = fftw_plan_dft_r2c_1d(sampleSize_, in_.data(), out_, FFTW_ESTIMATE);
   }
@@ -18,9 +21,10 @@ public:
   ~FFT() {
     // clean up
     fftw_destroy_plan(plan_);
+    fftw_free(out_);
   }
 
-  void process(const std::vector<int16_t> &samples) {
+  void process(const std::deque<int16_t> &samples) {
     // put the samples in the input array as doubles
     for (size_t i = 0; i < sampleSize_; ++i) {
       if (i < samples.size()) {
@@ -52,8 +56,7 @@ public:
 private:
   int16_t sampleSize_;
   std::vector<double> in_;
-  fftw_complex out_[8192]; // must be an array for fftw_plan_dft_r2c_1d
-                           // apparently. yes, it's annoying.
+  fftw_complex *out_;
   fftw_plan plan_;
   std::vector<double> magnitudes_;
 };
