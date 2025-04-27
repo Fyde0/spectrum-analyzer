@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
     }
 
     // get current audio samples from audio input
-    const std::deque<int16_t> &samples = recorder.getSamples();
+    const std::deque<int16_t> samples = recorder.getSamples();
 
     if (!samples.empty()) {
       // calculate fft of current samples, and get magnitudes
