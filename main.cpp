@@ -13,7 +13,6 @@
 
 #define DEFAULT_WINDOW_WIDTH 1280
 #define DEFAULT_WINDOW_HEIGHT 720
-#define FPS 30
 
 #define SMOOTHING_FACTOR 0.5 // lower value = more smoothing
 #define TILT 4.5             // dB/oct
@@ -27,6 +26,8 @@ Mode mode = spectrum;
 
 enum SpectrumMode { bars, line };
 SpectrumMode spectrumMode = line;
+
+u_int8_t fps = 30;
 
 bool fillEnabled = true;
 
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
       sf::VideoMode({DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT}),
       "Spectrum Analyzer");
   // fps limit
-  window.setFramerateLimit(FPS);
+  window.setFramerateLimit(fps);
   // set up view, this is to handle window resizing properly
   sf::FloatRect viewArea(
       sf::Vector2f(0, 0),
@@ -158,6 +159,22 @@ int main(int argc, char *argv[]) {
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) {
         if (oscilloscopeVZoom > 1) {
           oscilloscopeVZoom--;
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
+
+      // press . and , for fps
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period)) {
+        if (fps < 120) {
+          fps += 30;
+          window.setFramerateLimit(fps);
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma)) {
+        if (fps > 30) {
+          fps -= 30;
+          window.setFramerateLimit(fps);
         }
         sf::sleep(sf::milliseconds(200));
       }
