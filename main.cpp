@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <sys/types.h>
 #include <vector>
 
 #define DEFAULT_WINDOW_WIDTH 1280
@@ -21,17 +22,26 @@
 #define SAMPLE_RATE 44100
 #define SAMPLE_SIZE 8192
 
-enum Mode { bars, line };
-Mode mode = line;
+enum Mode { spectrum, oscilloscope, modeCount };
+Mode mode = spectrum;
+
+enum SpectrumMode { bars, line };
+SpectrumMode spectrumMode = line;
+
+bool fillEnabled = true;
+
+// horizontal zoom is kinda bad
+uint8_t oscilloscopeHZoom = 1;
+uint8_t oscilloscopeVZoom = 1;
 
 int main(int argc, char *argv[]) {
   // arguments
   if (argc >= 2) {
     std::string arg = argv[1];
     if (arg == "bars") {
-      mode = bars;
+      spectrumMode = bars;
     } else if (arg == "line") {
-      mode = line;
+      spectrumMode = line;
     } else {
       std::cerr << "Unknown mode: " << arg << "\n";
       std::cerr << "Usage: ./analyzer [bars|line]\n";
@@ -112,101 +122,197 @@ int main(int argc, char *argv[]) {
         // sleep for basic debouncing
         sf::sleep(sf::milliseconds(200));
       }
+
+      // press F to toggle fill
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F)) {
+        fillEnabled = !fillEnabled;
+        sf::sleep(sf::milliseconds(200));
+      }
+
+      // press M to switch mode
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::M)) {
+        mode = static_cast<Mode>((static_cast<int>(mode) + 1) % modeCount);
+        sf::sleep(sf::milliseconds(200));
+      }
+
+      // press arrows for zoom
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)) {
+        if (oscilloscopeHZoom < 20) {
+          oscilloscopeHZoom += 2;
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left)) {
+        if (oscilloscopeHZoom > 1) {
+          oscilloscopeHZoom -= 2;
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
+
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) {
+        if (oscilloscopeVZoom < 10) {
+          oscilloscopeVZoom++;
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) {
+        if (oscilloscopeVZoom > 1) {
+          oscilloscopeVZoom--;
+        }
+        sf::sleep(sf::milliseconds(200));
+      }
     }
 
     // get current audio samples from audio input
     const std::deque<int16_t> samples = recorder.getSamples();
 
     if (!samples.empty()) {
-      // calculate fft of current samples, and get magnitudes
-      fft.process(samples);
-      std::vector<double> magnitudes = fft.getMagnitudes();
 
       // clear the window
       window.clear(sf::Color::Black);
 
-      // calculate position based on magnitudes
-      // each iteration draws the previous item (bar or vertex)
-      // adding dummy value at the end for extra iteration to draw the last item
-      magnitudes.push_back(0.0);
-      // (yPositions is above, outside of loop)
-      std::vector<float> xPositions(magnitudes.size(), 0.0);
+      if (mode == spectrum) {
+        // calculate fft of current samples, and get magnitudes
+        fft.process(samples);
+        std::vector<double> magnitudes = fft.getMagnitudes();
 
-      for (size_t i = 0; i < magnitudes.size(); ++i) {
-        // convert to log scale
-        double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
-        // calculate frequency of item
-        double frequency = static_cast<double>(i * SAMPLE_RATE) / SAMPLE_SIZE;
-        // calculate tilt for this frequency
-        double tiltDb = TILT * std::log2(frequency / TILT_REF_FREQ);
-        // apply tilt
-        db += tiltDb;
-        // remove everything below minDb
-        db = std::max(minDb, db);
-        // scale to window size
-        double y = ((db - minDb) / (maxDb - minDb)) * window.getSize().y;
-        // smooth over time (EMA)
-        yPositions[i] =
-            SMOOTHING_FACTOR * y + (1 - SMOOTHING_FACTOR) * yPositions[i];
+        // calculate position based on magnitudes
+        // each iteration draws the previous item (bar or vertex)
+        // adding dummy value at the end for extra iteration to draw the last
+        // item
+        magnitudes.push_back(0.0);
+        // (yPositions is above, outside of loop)
+        std::vector<float> xPositions(magnitudes.size(), 0.0);
 
-        // frequency to log scale, for positioning and width
-        double freqLog = (std::log2(frequency) - std::log2(minFrequency)) /
-                         (std::log2(maxFrequency) - std::log2(minFrequency));
-        // x position based on frequency range and window size
-        xPositions[i] = window.getSize().x * freqLog;
-      }
+        for (size_t i = 0; i < magnitudes.size(); ++i) {
+          // convert to log scale
+          double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
+          // calculate frequency of item
+          double frequency = static_cast<double>(i * SAMPLE_RATE) / SAMPLE_SIZE;
+          // calculate tilt for this frequency
+          double tiltDb = TILT * std::log2(frequency / TILT_REF_FREQ);
+          // apply tilt
+          db += tiltDb;
+          // remove everything below minDb
+          db = std::max(minDb, db);
+          // scale to window size
+          double y = ((db - minDb) / (maxDb - minDb)) * window.getSize().y;
+          // smooth over time (EMA)
+          yPositions[i] =
+              SMOOTHING_FACTOR * y + (1 - SMOOTHING_FACTOR) * yPositions[i];
 
-      if (mode == bars) {
-        // start from 1 because each iteration we draw the previous item
-        for (size_t i = 1; i < magnitudes.size(); ++i) {
-          // width based on the position of the previous bar
-          float width =
-              std::max(minBarWidth, xPositions[i] - xPositions[i - 1]);
-          // x is slightly left because of bar width
-          float barX =
-              ((xPositions[i] + xPositions[i - 1]) / 2.0f) - width / 2.0f;
-          // create bar, set properties and draw
-          sf::RectangleShape bar;
-          bar.setSize(sf::Vector2f(width, yPositions[i - 1]));
-          bar.setPosition(
-              sf::Vector2f(barX, window.getSize().y - yPositions[i - 1]));
+          // frequency to log scale, for positioning and width
+          double freqLog = (std::log2(frequency) - std::log2(minFrequency)) /
+                           (std::log2(maxFrequency) - std::log2(minFrequency));
+          // x position based on frequency range and window size
+          xPositions[i] = window.getSize().x * freqLog;
+        }
 
-          window.draw(bar);
+        if (spectrumMode == bars) {
+          // start from 1 because each iteration we draw the previous item
+          for (size_t i = 1; i < magnitudes.size(); ++i) {
+            // width based on the position of the previous bar
+            float width =
+                std::max(minBarWidth, xPositions[i] - xPositions[i - 1]);
+            // x is slightly left because of bar width
+            float barX =
+                ((xPositions[i] + xPositions[i - 1]) / 2.0f) - width / 2.0f;
+            // create bar, set properties and draw
+            sf::RectangleShape bar;
+            bar.setSize(sf::Vector2f(width, yPositions[i - 1]));
+            bar.setPosition(
+                sf::Vector2f(barX, window.getSize().y - yPositions[i - 1]));
+
+            window.draw(bar);
+          }
+        }
+
+        if (spectrumMode == line) {
+          // line
+          sf::VertexArray lineVert(sf::PrimitiveType::LineStrip,
+                                   magnitudes.size());
+          // filled part
+          sf::VertexArray fill(sf::PrimitiveType::TriangleStrip);
+
+          for (size_t i = 1; i < magnitudes.size() - 2; ++i) {
+            // get four consecutive vectors for Catmull–Rom
+            const sf::Vector2f p0 = sf::Vector2f(
+                xPositions[i - 1], window.getSize().y - yPositions[i - 1]);
+            const sf::Vector2f p1 =
+                sf::Vector2f(xPositions[i], window.getSize().y - yPositions[i]);
+            const sf::Vector2f p2 = sf::Vector2f(
+                xPositions[i + 1], window.getSize().y - yPositions[i + 1]);
+            const sf::Vector2f p3 = sf::Vector2f(
+                xPositions[i + 2], window.getSize().y - yPositions[i + 2]);
+
+            // interpolate and make vertex for line and fill
+            for (float t = 0; t <= 1.0f; t += 0.1f) {
+              sf::Vertex v;
+              v.position = catmullRom(p0, p1, p2, p3, t);
+              v.color = sf::Color(255, 255, 255, 200);
+              lineVert.append(v);
+
+              if (fillEnabled) {
+                v.color.a = 63;
+                fill.append(v);
+                v.position.y = window.getSize().y;
+                fill.append(v);
+              }
+            }
+          }
+          window.draw(lineVert);
+
+          if (fillEnabled) {
+            window.draw(fill);
+          }
         }
       }
 
-      if (mode == line) {
+      if (mode == oscilloscope) {
+
         // line
-        sf::VertexArray lineVert(sf::PrimitiveType::LineStrip,
-                                 magnitudes.size());
-        // filled part
+        sf::VertexArray line(sf::PrimitiveType::LineStrip);
+        // fill
         sf::VertexArray fill(sf::PrimitiveType::TriangleStrip);
 
-        for (size_t i = 1; i < magnitudes.size() - 2; ++i) {
-          // get four consecutive vectors for Catmull–Rom
-          const sf::Vector2f p0 = sf::Vector2f(
-              xPositions[i - 1], window.getSize().y - yPositions[i - 1]);
-          const sf::Vector2f p1 =
-              sf::Vector2f(xPositions[i], window.getSize().y - yPositions[i]);
-          const sf::Vector2f p2 = sf::Vector2f(
-              xPositions[i + 1], window.getSize().y - yPositions[i + 1]);
-          const sf::Vector2f p3 = sf::Vector2f(
-              xPositions[i + 2], window.getSize().y - yPositions[i + 2]);
+        // total samples to draw, divide by horizontal zoom
+        const size_t numSamplesToDraw =
+            std::min(samples.size(), static_cast<ulong>(window.getSize().x) /
+                                         oscilloscopeHZoom);
 
-          // interpolate and make vertex for line and fill
-          for (float t = 0; t <= 1.0f; t += 0.1f) {
-            sf::Vertex v;
-            v.position = catmullRom(p0, p1, p2, p3, t);
-            v.color = sf::Color(255, 255, 255, 200);
-            lineVert.append(v);
+        for (size_t i = 0; i < numSamplesToDraw; i++) {
+          // map samples to "pixels"
+          size_t sampleIndex = i * samples.size() / numSamplesToDraw;
+          int16_t sample = samples[sampleIndex];
+
+          // apply vertical zoom
+          sample = sample * oscilloscopeVZoom;
+
+          // map sample from -32768 32767 to 0 windowHeight
+          float y = ((sample + 32768.f) / 65535.f) * window.getSize().y;
+
+          // flip Y
+          y = window.getSize().y - y;
+
+          sf::Vertex v;
+          // spread out based on hzoom
+          v.position = sf::Vector2f(i * oscilloscopeHZoom, y);
+          v.color = sf::Color(255, 255, 255, 200);
+          line.append(v);
+
+          if (fillEnabled) {
             v.color.a = 63;
             fill.append(v);
-            v.position.y = window.getSize().y;
+            v.position.y = window.getSize().y / 2.0;
             fill.append(v);
           }
         }
-        window.draw(lineVert);
-        window.draw(fill);
+
+        window.draw(line);
+
+        if (fillEnabled) {
+          window.draw(fill);
+        }
       }
 
       // update screen
