@@ -183,11 +183,21 @@ int main(int argc, char *argv[]) {
     // get current audio samples from audio input
     const std::deque<int16_t> samples = recorder.getSamples();
 
-    if (!samples.empty()) {
+    // check if all the samples are zero
+    // we don't need to calculate and draw if there's only silence
+    bool allZero = true;
+    for (int sample : samples) {
+      if (sample != 0) {
+        allZero = false;
+        break;
+      }
+    }
 
-      // clear the window
-      window.clear(sf::Color::Black);
+    // clear the window
+    // do this before the if or the last frame gets stuck when there's no sound
+    window.clear(sf::Color::Black);
 
+    if (!samples.empty() && !allZero) {
       if (mode == spectrum) {
         // calculate fft of current samples, and get magnitudes
         fft.process(samples);
@@ -331,10 +341,9 @@ int main(int argc, char *argv[]) {
           window.draw(fill);
         }
       }
-
-      // update screen
-      window.display();
     }
+    // update screen
+    window.display();
   }
 
   // clean up
