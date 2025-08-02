@@ -33,4 +33,4 @@ Run it:
 | Switch mode (spectrum/oscilloscope)      | M             |
 | Oscilloscope horizontal zoom (looks bad) | Right, Left   |
 | Oscilloscope vertical zoom               | Up, Down      |
-| FPS limit +/- 30 (higher CPU usage)      | Period, Comma |
+| FPS limit 30/60 (higher CPU usage)       | Period, Comma |

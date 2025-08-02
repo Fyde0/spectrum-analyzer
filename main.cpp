@@ -165,7 +165,7 @@ int main(int argc, char *argv[]) {
 
       // press . and , for fps
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period)) {
-        if (fps < 120) {
+        if (fps < 60) {
           fps += 30;
           window.setFramerateLimit(fps);
         }
