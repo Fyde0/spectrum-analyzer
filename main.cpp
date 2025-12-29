@@ -6,13 +6,10 @@
 #include <SFML/System.hpp>
 #include <SFML/Window.hpp>
 #include <algorithm>
-#include <cstdint>
 #include <iostream>
-#include <sys/types.h>
-#include <vector>
+#include <map>
 
-#define DEFAULT_WINDOW_WIDTH 1280
-#define DEFAULT_WINDOW_HEIGHT 720
+#define WINDOW_TITLE "Spectrum Analyzer"
 
 #define SMOOTHING_FACTOR 0.5 // lower value = more smoothing
 #define TILT 4.5             // dB/oct
@@ -22,6 +19,8 @@
 #define SAMPLE_SIZE 8192
 
 enum Mode { spectrum, oscilloscope, modeCount };
+std::map<Mode, std::string> modeToString = {
+    {spectrum, "spectrum"}, {oscilloscope, "oscilloscope"}, {modeCount, ""}};
 Mode mode = spectrum;
 
 enum SpectrumMode { bars, line };
@@ -35,30 +34,41 @@ bool fillEnabled = true;
 uint8_t oscilloscopeHZoom = 1;
 uint8_t oscilloscopeVZoom = 1;
 
+bool fullscreen = false;
+
 int main(int argc, char *argv[]) {
+
   // arguments
-  if (argc >= 2) {
-    std::string arg = argv[1];
-    if (arg == "bars") {
+  for (int i = 1; i < argc; ++i) {
+
+    std::string arg = argv[i];
+    if (arg == "--fullscreen" || arg == "--fs") {
+      fullscreen = true;
+    } else if (arg == "bars") {
       spectrumMode = bars;
     } else if (arg == "line") {
       spectrumMode = line;
     } else {
-      std::cerr << "Unknown mode: " << arg << "\n";
-      std::cerr << "Usage: ./analyzer [bars|line]\n";
+      std::cerr << "Unknown option: " << arg << "\n";
+      std::cerr << "Usage: ./analyzer [bars|line] [--fullscreen]\n";
       return 1;
     }
   }
+
   // set up window
-  sf::RenderWindow window(
-      sf::VideoMode({DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT}),
-      "Spectrum Analyzer");
+  sf::State windowState = sf::State::Windowed;
+  sf::VideoMode windowMode = sf::VideoMode::getDesktopMode();
+  if (fullscreen) {
+    windowState = sf::State::Fullscreen;
+    windowMode = sf::VideoMode::getFullscreenModes()[0];
+  }
+  sf::RenderWindow window(sf::VideoMode(windowMode), WINDOW_TITLE,
+                          sf::Style::Default, windowState);
   // fps limit
   window.setFramerateLimit(fps);
   // set up view, this is to handle window resizing properly
-  sf::FloatRect viewArea(
-      sf::Vector2f(0, 0),
-      sf::Vector2f(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
+  sf::FloatRect viewArea(sf::Vector2f(0, 0),
+                         sf::Vector2f(window.getSize().x, window.getSize().y));
   window.setView(sf::View(viewArea));
 
   // check if audio input exists
@@ -76,7 +86,8 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> devices = recorder.getAvailableDevices();
   std::string currentDevice = recorder.getDevice();
   int16_t currentDeviceIndex =
-      find(devices.begin(), devices.end(), currentDevice) - devices.begin();
+      std::find(devices.begin(), devices.end(), currentDevice) -
+      devices.begin();
 
   // fft
   FFT fft(SAMPLE_SIZE);
@@ -106,6 +117,12 @@ int main(int argc, char *argv[]) {
         window.setView(sf::View(viewArea));
       }
 
+      // press Q or Esc to quit
+      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Q) ||
+          sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape)) {
+        window.close();
+      }
+
       // press Tab to cycle between input devices
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab)) {
         currentDeviceIndex = (currentDeviceIndex + 1) % devices.size();
@@ -127,40 +144,56 @@ int main(int argc, char *argv[]) {
       // press F to toggle fill
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F)) {
         fillEnabled = !fillEnabled;
+        if (fillEnabled) {
+          std::cout << "Fill: enabled" << "\n";
+        } else {
+          std::cout << "Fill: disabled" << "\n";
+        }
         sf::sleep(sf::milliseconds(200));
       }
 
       // press M to switch mode
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::M)) {
         mode = static_cast<Mode>((static_cast<int>(mode) + 1) % modeCount);
+        std::cout << "Mode: " << modeToString[mode] << "\n";
         sf::sleep(sf::milliseconds(200));
       }
 
       // press arrows for zoom
-      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)) {
-        if (oscilloscopeHZoom < 20) {
-          oscilloscopeHZoom += 2;
+      if (mode == oscilloscope) {
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)) {
+          if (oscilloscopeHZoom < 20) {
+            oscilloscopeHZoom += 2;
+          }
+          std::cout << "Horizontal zoom: " << std::to_string(oscilloscopeHZoom)
+                    << "\n";
+          sf::sleep(sf::milliseconds(200));
         }
-        sf::sleep(sf::milliseconds(200));
-      }
-      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left)) {
-        if (oscilloscopeHZoom > 1) {
-          oscilloscopeHZoom -= 2;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left)) {
+          if (oscilloscopeHZoom > 1) {
+            oscilloscopeHZoom -= 2;
+          }
+          std::cout << "Horizontal zoom: " << std::to_string(oscilloscopeHZoom)
+                    << "\n";
+          sf::sleep(sf::milliseconds(200));
         }
-        sf::sleep(sf::milliseconds(200));
-      }
 
-      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) {
-        if (oscilloscopeVZoom < 10) {
-          oscilloscopeVZoom++;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) {
+          if (oscilloscopeVZoom < 10) {
+            oscilloscopeVZoom++;
+          }
+          std::cout << "Vertical zoom: " << std::to_string(oscilloscopeVZoom)
+                    << "\n";
+          sf::sleep(sf::milliseconds(200));
         }
-        sf::sleep(sf::milliseconds(200));
-      }
-      if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) {
-        if (oscilloscopeVZoom > 1) {
-          oscilloscopeVZoom--;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) {
+          if (oscilloscopeVZoom > 1) {
+            oscilloscopeVZoom--;
+          }
+          std::cout << "Vertical zoom: " << std::to_string(oscilloscopeVZoom)
+                    << "\n";
+          sf::sleep(sf::milliseconds(200));
         }
-        sf::sleep(sf::milliseconds(200));
       }
 
       // press . and , for fps
@@ -169,6 +202,7 @@ int main(int argc, char *argv[]) {
           fps += 30;
           window.setFramerateLimit(fps);
         }
+        std::cout << "FPS limit: " << std::to_string(fps) << "\n";
         sf::sleep(sf::milliseconds(200));
       }
       if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma)) {
@@ -176,6 +210,7 @@ int main(int argc, char *argv[]) {
           fps -= 30;
           window.setFramerateLimit(fps);
         }
+        std::cout << "FPS limit: " << std::to_string(fps) << "\n";
         sf::sleep(sf::milliseconds(200));
       }
     }
