@@ -2,31 +2,40 @@
 #include "Recorder.hpp"
 #include "catmullRom.hpp"
 #include <SFML/Graphics.hpp>
+#include <SFML/Graphics/Image.hpp>
 #include <SFML/Graphics/Vertex.hpp>
 #include <SFML/System.hpp>
 #include <SFML/Window.hpp>
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <sys/types.h>
 
 #define WINDOW_TITLE "Spectrum Analyzer"
 
+// Debug
+#define PRINT_FPS false
+
+// Audio
+#define SAMPLE_RATE 44100
+#define SAMPLE_SIZE 8192
+
+// Spectrum analyzer
 #define SMOOTHING_FACTOR 0.5 // lower value = more smoothing
 #define TILT 4.5             // dB/oct
 #define TILT_REF_FREQ 1000   // Hz
 
-#define SAMPLE_RATE 44100
-#define SAMPLE_SIZE 8192
-
-enum Mode { spectrum, oscilloscope, modeCount };
-std::map<Mode, std::string> modeToString = {
-    {spectrum, "spectrum"}, {oscilloscope, "oscilloscope"}, {modeCount, ""}};
-Mode mode = spectrum;
+enum Mode { spectrum, spectrogram, oscilloscope, modeCount };
+std::map<Mode, std::string> modeToString = {{spectrum, "spectrum"},
+                                            {spectrogram, "spectrogram"},
+                                            {oscilloscope, "oscilloscope"},
+                                            {modeCount, ""}};
+Mode mode = spectrogram;
 
 enum SpectrumMode { bars, line };
 SpectrumMode spectrumMode = line;
 
-u_int8_t fps = 30;
+u_int8_t fps = 60;
 
 bool fillEnabled = true;
 
@@ -95,6 +104,9 @@ int main(int argc, char *argv[]) {
   // variables
   const double minFrequency = 20.0;
   const double maxFrequency = SAMPLE_RATE / 2.0; // nyquist
+  const double logMin = std::log2(minFrequency);
+  const double logMax = std::log2(maxFrequency);
+  const double logRange = logMax - logMin;
   //
   const double minDb = 55.0;
   const double maxDb = 150.0;
@@ -102,8 +114,42 @@ int main(int argc, char *argv[]) {
   const float minBarWidth = 2.0;
   // needs to be outside the loop because it will average out for time smoothing
   std::vector<float> yPositions(SAMPLE_SIZE, 0.0);
+  //
+  float spectrogramColumnSpacing = 2.0f;
+  size_t maxSpectrogramColumns =
+      static_cast<size_t>(window.getSize().x / spectrogramColumnSpacing);
+  std::deque<sf::VertexArray> spectrogramColumns;
+
+  sf::Image spectrogramImage;
+  sf::Texture spectrogramTexture;
+  sf::Sprite spectrogramSprite(spectrogramTexture);
+  int spectrogramCursor = 0; // which column to write next
+  int spectrogramWidth = 0;  // set once on init
+
+  if (!spectrogramTexture.resize(
+          sf::Vector2u(window.getSize().x, window.getSize().y))) {
+    std::cout << "Failed resizing the spectrogram texture!" << std::endl;
+  }
+
+  spectrogramTexture.setRepeated(false); // we handle the split manually now
+  spectrogramSprite.setTexture(spectrogramTexture);
+  spectrogramCursor = 0;
+
+  // TODO precalculate stuff here
+
+  // FPS counter
+  using clock = std::chrono::high_resolution_clock;
+  int frameCount = 0;
+  double fps = 0.0;
+  auto start = clock::now();
 
   while (window.isOpen()) {
+
+    // for FPS counter
+    if (PRINT_FPS) {
+      frameCount++;
+    }
+
     while (const std::optional event = window.pollEvent()) {
       // close window when close button is pressed
       if (event->is<sf::Event::Closed>()) {
@@ -115,6 +161,15 @@ int main(int argc, char *argv[]) {
         viewArea.position = sf::Vector2f(0, 0);
         viewArea.size = sf::Vector2f(resized->size.x, resized->size.y);
         window.setView(sf::View(viewArea));
+
+        if (mode == spectrogram) {
+          if (!spectrogramTexture.resize(
+                  sf::Vector2u(resized->size.x, resized->size.y))) {
+            std::cout << "Failed resizing the spectrogram texture!"
+                      << std::endl;
+          }
+          // TODO clear spectrogram here?
+        }
       }
 
       // press Q or Esc to quit
@@ -246,7 +301,7 @@ int main(int argc, char *argv[]) {
         // (yPositions is above, outside of loop)
         std::vector<float> xPositions(magnitudes.size(), 0.0);
 
-        for (size_t i = 0; i < magnitudes.size(); ++i) {
+        for (size_t i = 1; i < magnitudes.size(); ++i) {
           // convert to log scale
           double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
           // calculate frequency of item
@@ -264,8 +319,7 @@ int main(int argc, char *argv[]) {
               SMOOTHING_FACTOR * y + (1 - SMOOTHING_FACTOR) * yPositions[i];
 
           // frequency to log scale, for positioning and width
-          double freqLog = (std::log2(frequency) - std::log2(minFrequency)) /
-                           (std::log2(maxFrequency) - std::log2(minFrequency));
+          double freqLog = (std::log2(frequency) - logMin) / logRange;
           // x position based on frequency range and window size
           xPositions[i] = window.getSize().x * freqLog;
         }
@@ -330,6 +384,71 @@ int main(int argc, char *argv[]) {
         }
       }
 
+      if (mode == spectrogram) {
+
+        fft.process(samples);
+        std::vector<double> magnitudes = fft.getMagnitudes();
+
+        // new column
+        sf::Image columnImage(sf::Vector2u(1, window.getSize().y),
+                              sf::Color::Black);
+
+        for (size_t i = 1; i < magnitudes.size(); ++i) {
+          double frequency = static_cast<double>(i * SAMPLE_RATE) / SAMPLE_SIZE;
+          double freqLog = (std::log2(frequency) - logMin) / logRange;
+          double db = 20.0 * std::log10(magnitudes[i] + 1e-12);
+          double tiltDb = TILT * std::log2(frequency / TILT_REF_FREQ);
+          db += tiltDb;
+          db = std::max(minDb, db);
+          float normDb =
+              std::clamp((float)((db - minDb) / (maxDb - minDb)), 0.f, 1.f);
+
+          uint8_t r = static_cast<uint8_t>(255 * normDb);
+          uint8_t g = static_cast<uint8_t>(255 * std::sqrt(normDb));
+          uint8_t b = static_cast<uint8_t>(255 * (1.0f - normDb));
+
+          // low frequencies at the bottom
+          unsigned int y =
+              window.getSize().y -
+              static_cast<unsigned int>(window.getSize().y * freqLog);
+          // don't draw out of the window
+          y = std::min(y, window.getSize().y - 1);
+
+          columnImage.setPixel(sf::Vector2u(0, y), sf::Color(r, g, b, 255));
+        }
+
+        // update the texture with the new column at the cursor's position
+        spectrogramTexture.update(columnImage,
+                                  sf::Vector2u(spectrogramCursor, 0));
+
+        // advance the cursor and wrap around at the end (the texture is a ring
+        // buffer)
+        spectrogramCursor = (spectrogramCursor + 1) % window.getSize().x;
+
+        // since the texture is a ring buffer it needs to be drawn in two parts
+        // the old portion is from the cursor to the last column
+        // the new portion is from the first column to the cursor
+
+        // old portion, to draw on the left
+        int leftWidth = window.getSize().x - spectrogramCursor;
+        if (leftWidth > 0) {
+          spectrogramSprite.setTextureRect(
+              sf::IntRect({spectrogramCursor, 0},
+                          {leftWidth, static_cast<int>(window.getSize().y)}));
+          spectrogramSprite.setPosition(sf::Vector2f(0.f, 0.f));
+          window.draw(spectrogramSprite);
+        }
+
+        // new portion, to draw on the right
+        int rightWidth = spectrogramCursor;
+        if (rightWidth > 0) {
+          spectrogramSprite.setTextureRect(sf::IntRect(
+              {0, 0}, {rightWidth, static_cast<int>(window.getSize().y)}));
+          spectrogramSprite.setPosition(sf::Vector2f((float)leftWidth, 0.f));
+          window.draw(spectrogramSprite);
+        }
+      }
+
       if (mode == oscilloscope) {
 
         // line
@@ -379,6 +498,18 @@ int main(int argc, char *argv[]) {
     }
     // update screen
     window.display();
+
+    // print FPS
+    if (PRINT_FPS) {
+      auto now = clock::now();
+      std::chrono::duration<double> elapsed = now - start;
+      if (elapsed.count() >= 1.0) {
+        fps = frameCount / elapsed.count();
+        std::cout << "FPS: " << fps << std::endl;
+        frameCount = 0;
+        start = now;
+      }
+    }
   }
 
   // clean up
